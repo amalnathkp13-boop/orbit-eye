@@ -1,0 +1,628 @@
+<title>ORBIT-EYE Simulator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Saira+Semi+Condensed:wght@500;600;700&display=swap">
+<style>
+/* Layout: instrument console — 3D viewport left, operator pendant right, telemetry strip and log below; Validation and Design-review as sibling tabs */
+:root {
+  --bg: #eaefef; --panel: #f7f9f9; --raise: #ffffff; --ink: #13212a; --mute: #586a72; --line: #d0d9db;
+  --accent: #0b6e87; --accent-ink: #ffffff; --ok: #2b8547; --warn: #b87a07; --crit: #c2342b; --skin: #b9b1a7; --metal: #8d9aa0;
+  --f-display: "Saira Semi Condensed", "Arial Narrow", system-ui, sans-serif;
+  --f-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0e161a; --panel: #142027; --raise: #1a2830; --ink: #dce6e8; --mute: #8b9da4; --line: #26373f;
+  --accent: #4fb3cc; --accent-ink: #062027; --ok: #5cc27e; --warn: #e2a83a; --crit: #ef6359; --skin: #8f877e; --metal: #6c7a80; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0e161a; --panel: #142027; --raise: #1a2830; --ink: #dce6e8; --mute: #8b9da4; --line: #26373f;
+  --accent: #4fb3cc; --accent-ink: #062027; --ok: #5cc27e; --warn: #e2a83a; --crit: #ef6359; --skin: #8f877e; --metal: #6c7a80; color-scheme: dark }
+* { box-sizing: border-box }
+[hidden] { display: none !important }
+body { background: var(--bg); color: var(--ink); font: 14px/1.5 var(--f-body); padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 14px 40px }
+.wrap { max-width: 1320px; margin: 0 auto; display: flex; flex-direction: column; gap: 14px }
+h1, h2, h3 { font-family: var(--f-display); font-weight: 600; letter-spacing: .01em; margin: 0; text-wrap: balance }
+h1 { font-size: 28px; line-height: 1.1 }
+h2 { font-size: 21px }
+h3 { font-size: 15px; text-transform: uppercase; letter-spacing: .07em; color: var(--mute); font-weight: 600 }
+.mono, .num { font-family: var(--f-mono); font-variant-numeric: tabular-nums }
+header.top { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 10px 24px }
+header.top p { margin: 2px 0 0; color: var(--mute); max-width: 70ch }
+nav.tabs { display: flex; gap: 4px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 3px }
+nav.tabs button { border: 0; background: transparent; color: var(--mute); font: 600 13px var(--f-body); padding: 7px 14px; border-radius: 6px; cursor: pointer }
+nav.tabs button[aria-selected="true"] { background: var(--accent); color: var(--accent-ink) }
+button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }
+
+/* status strip */
+.status { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px }
+.state { font: 700 15px var(--f-display); letter-spacing: .06em; padding: 4px 12px; border-radius: 999px; background: var(--accent); color: var(--accent-ink); white-space: nowrap }
+.state.ok { background: var(--ok); color: var(--accent-ink) } .state.warn { background: var(--warn); color: #1b1300 } .state.crit { background: var(--crit); color: #fff; animation: blink .8s steps(2) infinite }
+@keyframes blink { 50% { opacity: .55 } }
+@media (prefers-reduced-motion: reduce) { .state.crit { animation: none } }
+.msg { flex: 1 1 260px; min-width: 0; font-weight: 500 }
+.clock { color: var(--mute) }
+
+/* main grid */
+.simgrid { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 14px }
+@media (max-width: 900px) { .simgrid { grid-template-columns: minmax(0, 1fr) } }
+.view { position: relative; background: var(--raise); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; min-height: 520px; max-width: 100% }
+@media (max-width: 600px) { .view { min-height: 440px; aspect-ratio: auto } .meter { min-width: 0; padding: 5px 8px } .meter .big { font-size: 17px } .meter .hint, .meter .bar b { display: none } .legend { font-size: 11px } }
+.view > canvas { position: absolute; inset: 0; display: block; width: 100%; height: 100% }
+.view .fallback { position: absolute; inset: 0; display: grid; place-items: center; color: var(--mute); padding: 24px; text-align: center }
+.hud { position: absolute; left: 12px; top: 12px; right: 12px; display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; pointer-events: none }
+.meter { background: color-mix(in srgb, var(--panel) 88%, transparent); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; min-width: 210px }
+.meter .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--mute) }
+.meter .big { font: 600 24px var(--f-display) }
+.bar { position: relative; height: 8px; border-radius: 4px; background: var(--line); margin-top: 6px; overflow: hidden }
+.bar i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; background: var(--ok) }
+.bar b { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--ink); opacity: .55 }
+.legend { position: absolute; left: 12px; bottom: 10px; display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--mute); pointer-events: none }
+.legend span::before { content: ""; display: inline-block; width: 10px; height: 3px; margin-right: 6px; vertical-align: middle; background: var(--c) }
+
+/* pendant */
+.pendant { display: flex; flex-direction: column; gap: 10px; min-width: 0 }
+.grp { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px }
+.row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center }
+.btn { font: 500 13px var(--f-body); border: 1px solid var(--line); background: var(--raise); color: var(--ink); padding: 7px 11px; border-radius: 6px; cursor: pointer; touch-action: manipulation }
+.btn:hover { border-color: var(--accent) }
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent) }
+.btn:disabled { opacity: .45; cursor: not-allowed }
+.btn.active { outline: 2px solid var(--accent); outline-offset: 1px }
+.estop { width: 100%; font: 700 18px var(--f-display); letter-spacing: .12em; background: var(--crit); color: #fff; border: 3px solid color-mix(in srgb, var(--crit) 60%, #000); border-radius: 10px; padding: 12px; cursor: pointer }
+.pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px }
+.pad .btn { padding: 8px 4px; font-size: 12px; user-select: none; -webkit-user-select: none }
+label.sw { display: flex; align-items: center; gap: 8px; font-size: 13px }
+select, input[type=range] { font: 13px var(--f-body); color: var(--ink); background: var(--raise); border: 1px solid var(--line); border-radius: 6px; padding: 5px 6px; max-width: 100% }
+input[type=range] { padding: 0; accent-color: var(--accent); flex: 1 1 120px }
+.hint { font-size: 12px; color: var(--mute); margin: 0 }
+details > summary { cursor: pointer; font: 600 13px var(--f-body); color: var(--mute) }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; font-size: 13px; align-items: center }
+
+/* telemetry */
+.tele { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1.4fr); gap: 14px }
+@media (max-width: 1000px) { .tele { grid-template-columns: minmax(0, 1fr) } }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; min-width: 0 }
+.tablewrap { overflow-x: auto }
+table { border-collapse: collapse; width: 100%; font-size: 13px }
+th { text-align: left; font: 600 11px var(--f-body); text-transform: uppercase; letter-spacing: .07em; color: var(--mute); padding: 6px 8px; border-bottom: 1px solid var(--line); white-space: nowrap }
+td { padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top }
+td.num, th.num { text-align: right }
+.resbar { width: 110px; height: 8px; background: var(--line); border-radius: 4px; position: relative; overflow: hidden }
+.resbar i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--accent); border-radius: 4px }
+.resbar b { position: absolute; left: 72.7%; top: 0; bottom: 0; width: 2px; background: var(--crit) }
+.charts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px }
+@media (max-width: 700px) { .charts { grid-template-columns: minmax(0, 1fr) } }
+.chart { display: flex; flex-direction: column; gap: 4px; min-width: 0 }
+.chart canvas { width: 100%; height: 120px; display: block }
+.chips { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin-top: 12px }
+.chip { border: 1px solid var(--line); border-radius: 6px; padding: 6px 9px; background: var(--raise) }
+.chip .lbl { font-size: 11px; color: var(--mute); text-transform: uppercase; letter-spacing: .07em }
+.chip .v { font: 500 15px var(--f-mono); font-variant-numeric: tabular-nums }
+.log { max-height: 230px; overflow-y: auto; font: 12px/1.55 var(--f-mono) }
+.log div { display: grid; grid-template-columns: 62px 70px minmax(0, 1fr); gap: 8px; padding: 2px 0; border-bottom: 1px dashed var(--line) }
+.log .ty { font-weight: 500 } .ty.FAULT, .ty.ESTOP { color: var(--crit) } .ty.STOP, .ty.STO, .ty.AVOID, .ty.INJ { color: var(--warn) } .ty.ALIGN, .ty.RECOVER, .ty.REG { color: var(--ok) } .ty.PLAN, .ty.MOVE { color: var(--accent) }
+
+/* validation + design */
+.prose { max-width: 78ch }
+.prose p { margin: 0 0 10px }
+.verdict { display: inline-block; font: 600 11px var(--f-body); letter-spacing: .07em; text-transform: uppercase; padding: 2px 8px; border-radius: 999px; white-space: nowrap }
+.v-pass { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok) }
+.v-warn { background: color-mix(in srgb, var(--warn) 20%, transparent); color: var(--warn) }
+.v-fail { background: color-mix(in srgb, var(--crit) 16%, transparent); color: var(--crit) }
+.findings { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 380px), 1fr)); gap: 12px }
+.find { background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--sev, var(--warn)); border-radius: 6px; padding: 12px 14px; display: flex; flex-direction: column; gap: 6px }
+.find h4 { margin: 0; font: 600 15px var(--f-body) }
+.find p { margin: 0; font-size: 13.5px }
+.find .fix { color: var(--ink) } .find .why { color: var(--mute) }
+.svgwrap { overflow-x: auto }
+svg text { font-family: var(--f-mono); font-size: 11px; fill: var(--mute) }
+.section { display: flex; flex-direction: column; gap: 14px }
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <div>
+      <h1>ORBIT-EYE</h1>
+      <p>5-axis ophthalmic positioning gantry — live physics model of the servo axes, dual encoders, head vibration, keep-out planner and three-tier safety chain.</p>
+    </div>
+    <nav class="tabs" role="tablist">
+      <button role="tab" id="t-sim" aria-selected="true" data-tab="sim">Simulator</button>
+      <button role="tab" id="t-val" aria-selected="false" data-tab="val">Validation</button>
+      <button role="tab" id="t-fix" aria-selected="false" data-tab="fix">Design review</button>
+    </nav>
+  </header>
+
+  <!-- ===================== SIMULATOR ===================== -->
+  <section class="section" id="tab-sim">
+    <div class="status">
+      <span class="state" id="state">INIT</span>
+      <span class="msg" id="msg">Starting…</span>
+      <span class="clock mono" id="clock">t = 0.000 s</span>
+    </div>
+
+    <div class="simgrid">
+      <div class="view" id="view">
+        <div class="hud">
+          <div class="meter">
+            <div class="lbl">Head-to-face clearance</div>
+            <div class="big num" id="clrBig">— mm</div>
+            <div class="bar"><i id="clrBar"></i><b style="left:12.5%"></b><b style="left:50%"></b></div>
+            <div class="hint" style="margin-top:4px">marks: 10 mm keep-out · 40 mm full-speed band</div>
+          </div>
+          <div class="meter">
+            <div class="lbl">Tip vs eye target</div>
+            <div class="big num" id="alignBig">—</div>
+            <div class="hint" id="alignSub">pupil camera idle</div>
+          </div>
+        </div>
+        <div class="legend">
+          <span style="--c: var(--accent)">planned path</span>
+          <span style="--c: var(--warn)">keep-out shell (10 mm)</span>
+          <span style="--c: var(--crit)">target</span>
+        </div>
+        <div class="fallback" id="fallback" hidden>3D view could not load (Three.js blocked). The physics, controls and telemetry still run.</div>
+      </div>
+
+      <aside class="pendant">
+        <div class="grp">
+          <h3>Automatic</h3>
+          <div class="row">
+            <button class="btn" id="bReg">Register face</button>
+            <button class="btn primary" id="bR">Right eye</button>
+            <button class="btn primary" id="bL">Left eye</button>
+            <button class="btn" id="bPark">Park</button>
+          </div>
+          <div class="row">
+            <button class="btn" id="bDemo">Run 3-minute demo script</button>
+          </div>
+          <p class="hint" id="demoTxt">Plays the jury sequence: both eyes, hand-over, slip, e-stop, patient lean.</p>
+        </div>
+
+        <div class="grp">
+          <h3>Hand-over (admittance)</h3>
+          <div class="row">
+            <button class="btn" id="bMan">Take manual control</button>
+            <button class="btn" id="bAuto">Return to automatic</button>
+          </div>
+          <label class="sw"><input type="checkbox" id="dead"> Enabling switch held (deadman)</label>
+          <div class="row"><span class="hint">Push force</span><input type="range" id="fMag" min="0.5" max="8" step="0.5" value="3"><span class="mono" id="fMagV">3.0 N</span></div>
+          <div class="pad" id="pad">
+            <span></span><button class="btn" data-f="2,1">Up +Z</button><span></span>
+            <button class="btn" data-f="0,-1">Left −X</button><button class="btn" data-f="1,-1">Toward face −Y</button><button class="btn" data-f="0,1">Right +X</button>
+            <button class="btn" data-f="3,-1">Yaw −</button><button class="btn" data-f="2,-1">Down −Z</button><button class="btn" data-f="3,1">Yaw +</button>
+          </div>
+          <p class="hint">Hold a button to push the handle. Arrow keys and PgUp/PgDn also push while manual mode is on.</p>
+        </div>
+
+        <div class="grp">
+          <h3>Fault injection</h3>
+          <div class="row">
+            <select id="fAxis" aria-label="Axis"><option value="auto">Fastest-moving axis</option><option value="0">X</option><option value="1">Y</option><option value="2">Z</option><option value="3">Yaw</option><option value="4">Pitch</option></select>
+          </div>
+          <div class="row">
+            <button class="btn" id="bSlip">Coupling slip</button>
+            <button class="btn" id="bFreeze">Freeze load encoder</button>
+          </div>
+          <p class="hint">Inject while the head is moving; a slip on a stationary axis produces no lost motion.</p>
+        </div>
+
+        <div class="grp">
+          <h3>Patient</h3>
+          <div class="row">
+            <button class="btn" data-lean="20,0,0">Lean +X 20</button>
+            <button class="btn" data-lean="-20,0,0">Lean −X 20</button>
+            <button class="btn" data-lean="0,15,0">Lean in 15</button>
+            <button class="btn" data-lean="0,0,12">Rise 12</button>
+          </div>
+          <label class="sw"><input type="checkbox" id="breath" checked> Breathing motion (0.8 mm, 0.25 Hz)</label>
+        </div>
+
+        <div class="grp">
+          <button class="estop" id="bE">EMERGENCY STOP</button>
+          <div class="row">
+            <button class="btn" id="bReset">Reset e-stop</button>
+            <select id="cat" aria-label="E-stop category"><option value="1">Cat 1: controlled stop, then STO</option><option value="0">Cat 0: cut power (as originally specified)</option></select>
+          </div>
+        </div>
+
+        <div class="grp">
+          <details>
+            <summary>Hardware model and sim speed</summary>
+            <div class="kv" style="margin-top:8px">
+              <span>Rotary load encoder</span><select id="hEnc"><option value="MT6835">MT6835, 21-bit</option><option value="AMT223">AMT223, 14-bit (spec)</option></select>
+              <span>Ball-screw nut</span><select id="hNut"><option value="DFU1605">DFU1605 preloaded</option><option value="SFU1605">SFU1605 (≈20 µm backlash)</option></select>
+              <span>Head mode</span><span class="row"><input type="range" id="hF" min="25" max="120" step="1" value="45"><span class="mono" id="hFv">45 Hz</span></span>
+              <span>Input shaping</span><label class="sw"><input type="checkbox" id="hZ" checked> ZVD at 45 Hz</label>
+              <span>Sim speed</span><select id="hSpd"><option value="1">Real time</option><option value="0.5">½ speed</option><option value="0.2">⅕ speed (slow-mo)</option></select>
+            </div>
+            <p class="hint" style="margin-top:6px">Changing hardware rebuilds the machine and re-registers the face.</p>
+          </details>
+        </div>
+      </aside>
+    </div>
+
+    <div class="tele">
+      <div class="card">
+        <h3>Axes — dual-encoder cross-check</h3>
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th>Axis</th><th class="num">Command</th><th class="num">Load enc.</th><th class="num">Motor enc.</th><th>Mismatch / threshold</th></tr></thead>
+            <tbody id="axTab"></tbody>
+          </table>
+        </div>
+        <div class="chips" id="chips"></div>
+      </div>
+      <div class="card">
+        <h3>Last 6 seconds</h3>
+        <div class="charts">
+          <div class="chart"><span class="hint">Clearance (mm)</span><canvas id="cClr"></canvas></div>
+          <div class="chart"><span class="hint">Tip error vs command (µm)</span><canvas id="cErr"></canvas></div>
+          <div class="chart"><span class="hint">Slip residual ÷ threshold</span><canvas id="cRes"></canvas></div>
+        </div>
+        <h3 style="margin-top:12px">Event log</h3>
+        <div class="log" id="log"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== VALIDATION ===================== -->
+  <section class="section" id="tab-val" hidden>
+    <div class="card prose" style="max-width:none">
+      <h2>Validation against the test plan</h2>
+      <p>Every number below comes from the engine running in this page, exercised by a scripted test suite: 20-cycle bidirectional repeatability, 1000 randomised moves with random patient offsets, 115 injected faults, 40 e-stops at peak speed, hand-over force steps, patient leans and a head-mode sweep. The model covers motor and load inertia, ball-screw and harmonic-drive stiffness, backlash, stiction, encoder quantisation and noise, a cantilevered head mode, depth-camera noise and breathing.</p>
+      <p class="hint">Not modelled: thermal drift, rail straightness, encoder scale error, cable drag and frame flex. Expect a real build to land at 5–15 µm repeatability instead of the 2 µm the model predicts.</p>
+    </div>
+    <div class="card"><div class="tablewrap"><table id="valTab"><thead><tr><th>Metric</th><th>Target</th><th>Simulated result</th><th>Verdict</th></tr></thead><tbody></tbody></table></div></div>
+    <div class="card">
+      <h3>Residual vibration after a 1 s free-space move, vs. the head's real resonance</h3>
+      <p class="hint">ZVD shaper is tuned to 45 Hz. Peak tip excursion after the command ends.</p>
+      <div class="svgwrap" id="zvdSvg"></div>
+    </div>
+  </section>
+
+  <!-- ===================== DESIGN REVIEW ===================== -->
+  <section class="section" id="tab-fix" hidden>
+    <div class="card prose" style="max-width:none">
+      <h2>What had to change to make it work</h2>
+      <p>The simulation exposed fourteen places where the original concept would fail its own test plan or a jury question. Each card states the problem, the evidence from the model, and the change now built into the simulator.</p>
+    </div>
+    <div class="findings" id="findings"></div>
+    <div class="card">
+      <h3>Bill of materials changes (approximate, check current supplier prices)</h3>
+      <div class="tablewrap"><table id="bomTab"><thead><tr><th>Replace</th><th>With</th><th class="num">Δ cost (₹)</th><th>Reason</th></tr></thead><tbody></tbody></table></div>
+    </div>
+    <div class="card">
+      <h3>Control architecture as simulated</h3>
+      <div class="tablewrap"><table><thead><tr><th>Loop</th><th>Rate</th><th>Runs on</th><th>Sensor</th></tr></thead><tbody>
+        <tr><td>Current (FOC)</td><td class="mono">≥ 16 kHz</td><td>Servo drive (ODrive S1 / moteus class)</td><td>Phase currents</td></tr>
+        <tr><td>Velocity</td><td class="mono">10 kHz</td><td>Servo drive</td><td>AS5048A on motor, α-β observer with accel feed-forward</td></tr>
+        <tr><td>Position</td><td class="mono">1 kHz</td><td>Teensy 4.1</td><td>Load-side scale (AS5311 linear, MT6835 rotary), PI + velocity/accel/friction feed-forward</td></tr>
+        <tr><td>Slip cross-check</td><td class="mono">10 kHz</td><td>Teensy 4.1</td><td>Motor − load − expected elastic deflection, 1 kHz low-pass, 4-sample persistence</td></tr>
+        <tr><td>Keep-out monitor</td><td class="mono">1 kHz</td><td>Teensy 4.1</td><td>FK of load encoders vs registered face; trip below 6 mm</td></tr>
+        <tr><td>Planner + look-ahead</td><td class="mono">event / 30 Hz</td><td>Host PC</td><td>RRT* in 5-D, clearance-weighted cost, B-spline, SSM speed limits, FIR S-curve, ZVD</td></tr>
+        <tr><td>Face tracking</td><td class="mono">30 Hz</td><td>Host PC</td><td>RealSense D405, α-β filter (position + velocity)</td></tr>
+        <tr><td>Fine alignment</td><td class="mono">100 Hz</td><td>Host PC</td><td>On-head pupil camera (lateral) + corneal-reflex focus (axial), last 4 mm only</td></tr>
+      </tbody></table></div>
+    </div>
+  </section>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+/*__ENGINE__*/
+</script>
+<script>
+const RESULTS = /*__RESULTS__*/;
+(function () {
+'use strict';
+const $ = s => document.querySelector(s), $$ = s => Array.from(document.querySelectorAll(s));
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const N = OE.NAMES;
+
+/* ---------- tabs ---------- */
+function showTab(id) { $$('nav.tabs button').forEach(b => b.setAttribute('aria-selected', b.dataset.tab === id)); ['sim', 'val', 'fix'].forEach(t => $('#tab-' + t).hidden = t !== id); if (id === 'sim') resize(); }
+$$('nav.tabs button').forEach(b => b.addEventListener('click', () => showTab(b.dataset.tab)));
+const h = (location.hash || '').slice(1); if (['val', 'fix'].includes(h)) showTab(h);
+
+/* ---------- simulation instance ---------- */
+let sim;
+let renderer, scene, camera, controls, faceG, bubble, gantry = {}, pathLine, trailLine, trailPos, trailN = 0, targetM, lastTraj = null, ok3d = false;
+function hw() { return { rotEnc: $('#hEnc').value, nut: $('#hNut').value, fHead: +$('#hF').value, zvd: $('#hZ').checked, estopCat: +$('#cat').value, breathing: $('#breath').checked, seed: (Math.random() * 1e9) | 0 }; }
+function rebuild() { sim = new OE.Sim(hw()); sim.cmd('register'); trailN = 0; lastTraj = null; }
+rebuild();
+['#hEnc', '#hNut', '#hZ'].forEach(s => $(s).addEventListener('change', rebuild));
+$('#hF').addEventListener('input', () => { $('#hFv').textContent = $('#hF').value + ' Hz'; });
+$('#hF').addEventListener('change', rebuild);
+$('#cat').addEventListener('change', () => { sim.o.estopCat = +$('#cat').value; });
+$('#breath').addEventListener('change', () => { sim.o.breathing = $('#breath').checked; });
+
+$('#bReg').onclick = () => sim.cmd('register');
+$('#bR').onclick = () => sim.cmd('goR');
+$('#bL').onclick = () => sim.cmd('goL');
+$('#bPark').onclick = () => sim.cmd('park');
+$('#bE').onclick = () => sim.cmd('estop');
+$('#bReset').onclick = () => sim.cmd('reset');
+$('#bMan').onclick = () => sim.cmd('manual');
+$('#bAuto').onclick = () => { $('#dead').checked = false; sim.cmd('deadman', false); sim.cmd('auto'); };
+$('#dead').addEventListener('change', () => sim.cmd('deadman', $('#dead').checked));
+$('#fMag').addEventListener('input', () => $('#fMagV').textContent = (+$('#fMag').value).toFixed(1) + ' N');
+function pickAxis() { const v = $('#fAxis').value; if (v !== 'auto') return +v; let best = 1, bv = -1; for (let i = 0; i < 5; i++) { const sp = Math.abs(sim.vc[i]) / (i < 3 ? 1 : 0.5); if (sp > bv) { bv = sp; best = i; } } return best; }
+$('#bSlip').onclick = () => sim.cmd('inject', { type: 'slip', axis: pickAxis(), ms: 300 });
+$('#bFreeze').onclick = () => sim.cmd('inject', { type: 'freeze', axis: pickAxis(), ms: 300 });
+$$('[data-lean]').forEach(b => b.onclick = () => sim.cmd('shiftFace', b.dataset.lean.split(',').map(Number)));
+
+/* force pad: press-and-hold */
+let held = null;
+function applyForce(ax, sgn) { const F = [0, 0, 0, 0, 0]; if (ax != null) F[ax] = sgn * (ax < 3 ? +$('#fMag').value : +$('#fMag').value * 0.04); sim.cmd('force', F); }
+$$('#pad [data-f]').forEach(b => {
+  const [ax, s] = b.dataset.f.split(',').map(Number);
+  const on = e => { e.preventDefault(); held = b; b.classList.add('active'); applyForce(ax, s); };
+  const off = () => { if (held === b) { held = null; b.classList.remove('active'); applyForce(null); } };
+  b.addEventListener('pointerdown', on); b.addEventListener('pointerup', off); b.addEventListener('pointerleave', off); b.addEventListener('pointercancel', off);
+});
+const keyMap = { ArrowLeft: [0, -1], ArrowRight: [0, 1], ArrowUp: [1, -1], ArrowDown: [1, 1], PageUp: [2, 1], PageDown: [2, -1] };
+addEventListener('keydown', e => { if (sim.state !== 'MANUAL_JOG') return; const k = keyMap[e.key]; if (k && !e.repeat && !['INPUT', 'SELECT'].includes(document.activeElement.tagName)) { e.preventDefault(); applyForce(k[0], k[1]); } });
+addEventListener('keyup', e => { if (keyMap[e.key]) applyForce(null); });
+
+/* ---------- demo script ---------- */
+let demo = null;
+function waitSim(pred, maxS = 15) { return new Promise(res => { const t0 = sim.t; waiters.push({ pred: () => pred() || sim.t - t0 > maxS, res }); }); }
+const waiters = [];
+const sleep = s => { const t0 = sim.t; return waitSim(() => sim.t - t0 >= s, s + 1); };
+async function runDemo() {
+  const token = demo = {}; const live = () => demo === token;
+  const say = t => { $('#demoTxt').textContent = t; };
+  $('#bDemo').textContent = 'Stop demo';
+  rebuild(); say('0:00 Registering the mannequin face with the depth camera');
+  await waitSim(() => sim.state === 'READY'); if (!live()) return;
+  say('0:20 One button: auto-align right eye'); sim.cmd('goR'); await waitSim(() => sim.state === 'IMAGING'); await sleep(1.5); if (!live()) return;
+  say('0:50 Switch to left eye — RRT* swings around the nose'); sim.cmd('goL'); await waitSim(() => sim.state === 'IMAGING'); await sleep(1.2); if (!live()) return;
+  say('1:20 Operator takes the handle (admittance hand-over)'); sim.cmd('manual'); await sleep(0.3); $('#dead').checked = true; sim.cmd('deadman', true);
+  sim.cmd('force', [3, 0, 0, 0, 0]); await sleep(0.9); sim.cmd('force', [0, 0, -2, 0, 0]); await sleep(0.7);
+  say('1:35 Pushing toward the face: the virtual wall holds the 10 mm keep-out'); sim.cmd('force', [-2, -6, 0, 0, 0]); await sleep(1.8);
+  sim.cmd('force', [0, 0, 0, 0, 0]); $('#dead').checked = false; sim.cmd('deadman', false); await sleep(0.4); if (!live()) return;
+  say('1:45 Released — automatic control re-acquires the left eye'); sim.cmd('auto'); await waitSim(() => sim.state === 'IMAGING'); await sleep(1); if (!live()) return;
+  say('1:50 Fault injection: coupling slip mid-arc'); sim.cmd('goR'); await waitSim(() => sim.state === 'MOVE_ARC' && sim.tau > 500); sim.cmd('inject', { type: 'slip', axis: pickAxis(), ms: 300 });
+  await waitSim(() => sim.state === 'IMAGING'); await sleep(1.2); if (!live()) return;
+  say('2:20 E-stop pressed mid-arc (Category 1)'); sim.cmd('goL'); await waitSim(() => sim.state === 'MOVE_ARC' && sim.tau > 700); sim.cmd('estop'); await sleep(1.5);
+  say('2:30 Reset: retract, replan, resume'); sim.cmd('reset'); await waitSim(() => sim.state === 'IMAGING'); await sleep(1); if (!live()) return;
+  say('2:40 Patient leans 20 mm: retreat, hold until still, follow the patient'); sim.cmd('shiftFace', [20, 0, 0]); await sleep(0.6); await waitSim(() => sim.state === 'IMAGING'); await sleep(1.5);
+  say('2:55 "The patient never moves. The platform always knows exactly where it is."'); demo = null; $('#bDemo').textContent = 'Run 3-minute demo script';
+}
+$('#bDemo').onclick = () => { if (demo) { demo = null; $('#bDemo').textContent = 'Run 3-minute demo script'; $('#demoTxt').textContent = 'Demo stopped.'; } else runDemo(); };
+
+/* ---------- 3D scene ---------- */
+const view = $('#view');
+function col(n) { return new THREE.Color(css(n) || '#888'); }
+function init3d() {
+  if (typeof THREE === 'undefined') { $('#fallback').hidden = false; return; }
+  try {
+    renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+    renderer.setPixelRatio(Math.min(2, devicePixelRatio || 1));
+    view.prepend(renderer.domElement);
+    scene = new THREE.Scene();
+    camera = new THREE.PerspectiveCamera(38, 1.4, 5, 5000); camera.up.set(0, 0, 1); camera.position.set(760, 470, 330);
+    if (THREE.OrbitControls) { controls = new THREE.OrbitControls(camera, renderer.domElement); controls.target.set(0, 150, -30); controls.enableDamping = true; controls.update(); }
+    else camera.lookAt(0, 150, -30);
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x445055, 0.85));
+    const dl = new THREE.DirectionalLight(0xffffff, 0.75); dl.position.set(200, 400, 500); scene.add(dl);
+    const M = c => new THREE.MeshStandardMaterial({ color: c, roughness: 0.6, metalness: 0.15 });
+    // patient
+    faceG = new THREE.Group(); scene.add(faceG);
+    const skin = M(0xb9b1a7); gantry.skin = skin;
+    const head = new THREE.Mesh(new THREE.SphereGeometry(1, 48, 32), skin); head.scale.set(...OE.G.faceR); head.position.set(...OE.G.faceC); faceG.add(head);
+    const A = new THREE.Vector3(...OE.G.noseA), B = new THREE.Vector3(...OE.G.noseB), L = A.distanceTo(B);
+    const nose = new THREE.Mesh(new THREE.CylinderGeometry(OE.G.noseR, OE.G.noseR, L, 20), skin); nose.position.copy(A.clone().add(B).multiplyScalar(0.5)); nose.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), B.clone().sub(A).normalize()); faceG.add(nose);
+    [A, B].forEach(p => { const s = new THREE.Mesh(new THREE.SphereGeometry(OE.G.noseR, 20, 14), skin); s.position.copy(p); faceG.add(s); });
+    ['R', 'L'].forEach(k => { const e = OE.G.eyes[k]; const w = new THREE.Mesh(new THREE.SphereGeometry(9, 24, 16), M(0xf2f0ea)); w.position.set(e[0], e[1] - 6, e[2]); faceG.add(w); const ir = new THREE.Mesh(new THREE.SphereGeometry(4.2, 20, 14), M(0x24495a)); ir.position.set(e[0], e[1] + 1.2, e[2]); faceG.add(ir); });
+    const chin = new THREE.Mesh(new THREE.BoxGeometry(110, 60, 8), M(0x6d7b82)); chin.position.set(0, -50, -122); faceG.add(chin);
+    // keep-out shell: ellipsoid grown by the margin
+    bubble = new THREE.Mesh(new THREE.SphereGeometry(1, 40, 24), new THREE.MeshBasicMaterial({ color: 0xd49a2a, wireframe: true, transparent: true, opacity: 0.22 }));
+    bubble.scale.set(...OE.G.faceR.map(r => r + OE.G.margin)); bubble.position.set(...OE.G.faceC); faceG.add(bubble);
+    // gantry
+    const metal = M(0x8d9aa0), dark = M(0x39464c), acc = M(0x0b6e87); gantry.metal = metal; gantry.acc = acc;
+    const base = new THREE.Mesh(new THREE.BoxGeometry(560, 360, 14), dark); base.position.set(0, 330, -168); scene.add(base);
+    const xr = new THREE.Mesh(new THREE.BoxGeometry(520, 24, 14), metal); xr.position.set(0, 430, -154); scene.add(xr);
+    gantry.xc = new THREE.Mesh(new THREE.BoxGeometry(70, 60, 16), acc); scene.add(gantry.xc);
+    gantry.yr = new THREE.Mesh(new THREE.BoxGeometry(22, 260, 12), metal); scene.add(gantry.yr);
+    gantry.yc = new THREE.Mesh(new THREE.BoxGeometry(60, 60, 18), acc); scene.add(gantry.yc);
+    gantry.zc = new THREE.Mesh(new THREE.BoxGeometry(30, 30, 300), metal); scene.add(gantry.zc);
+    gantry.zcar = new THREE.Mesh(new THREE.BoxGeometry(46, 40, 40), acc); scene.add(gantry.zcar);
+    gantry.arm = new THREE.Mesh(new THREE.BoxGeometry(16, 1, 16), metal); scene.add(gantry.arm);
+    gantry.yaw = new THREE.Mesh(new THREE.CylinderGeometry(20, 20, 14, 28), dark); gantry.yaw.rotation.x = Math.PI / 2; scene.add(gantry.yaw);
+    gantry.headG = new THREE.Group(); scene.add(gantry.headG);
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(17, 20, 100, 28), M(0xdfe5e7)); body.position.set(0, -20, 0); gantry.headG.add(body);
+    const lens = new THREE.Mesh(new THREE.CylinderGeometry(11, 15, 22, 28), dark); lens.position.set(0, -79, 0); gantry.headG.add(lens);
+    const glass = new THREE.Mesh(new THREE.CircleGeometry(9, 24), new THREE.MeshStandardMaterial({ color: 0x5fc3dd, emissive: 0x0b4f60, roughness: 0.1 })); glass.position.set(0, -90.2, 0); glass.rotation.x = Math.PI / 2; gantry.headG.add(glass);
+    // path, trail, target
+    pathLine = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: 0x0b6e87 })); scene.add(pathLine);
+    trailPos = new Float32Array(3 * 600);
+    const tg = new THREE.BufferGeometry(); tg.setAttribute('position', new THREE.BufferAttribute(trailPos, 3)); tg.setDrawRange(0, 0);
+    trailLine = new THREE.Line(tg, new THREE.LineBasicMaterial({ color: 0x888888, transparent: true, opacity: 0.6 })); scene.add(trailLine);
+    targetM = new THREE.Group(); const tm = new THREE.MeshBasicMaterial({ color: 0xc2342b });
+    targetM.add(new THREE.Mesh(new THREE.TorusGeometry(5, 0.6, 8, 32), tm)); const c1 = new THREE.Mesh(new THREE.BoxGeometry(16, 0.8, 0.8), tm); targetM.add(c1); const c2 = c1.clone(); c2.rotation.z = Math.PI / 2; targetM.add(c2);
+    targetM.rotation.x = Math.PI / 2; scene.add(targetM);
+    ok3d = true; applyTheme(); resize();
+  } catch (e) { console.warn(e); $('#fallback').hidden = false; ok3d = false; }
+}
+function applyTheme() {
+  if (!ok3d) return;
+  scene.background = col('--raise'); gantry.skin.color = col('--skin'); gantry.metal.color = col('--metal'); gantry.acc.color = col('--accent');
+  pathLine.material.color = col('--accent'); trailLine.material.color = col('--mute'); targetM.children.forEach(m => m.material.color = col('--crit'));
+}
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
+new MutationObserver(applyTheme).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+function resize() { if (!ok3d) return; const w = view.clientWidth, hh = view.clientHeight; if (!w || !hh) return; renderer.setSize(w, hh, false); camera.aspect = w / hh; camera.fov = w / hh < 1 ? 58 : 38; camera.updateProjectionMatrix(); }
+addEventListener('resize', resize);
+if ('ResizeObserver' in window) new ResizeObserver(resize).observe(view);
+
+function update3d() {
+  if (!ok3d) return;
+  const f = sim.fTrue; faceG.position.set(f[0], f[1], f[2]);
+  const c = sim.clrTrue, bc = c < OE.G.margin ? '--crit' : c < OE.G.margin + 15 ? '--warn' : '--ok';
+  bubble.material.color = col(bc); bubble.material.opacity = c < OE.G.margin + 30 ? 0.42 : 0.16;
+  const q = Array.from(sim.xl), Y0 = OE.G.Y0, pv = OE.pivotOf(q);
+  gantry.xc.position.set(q[0], 430, -140);
+  gantry.yr.position.set(q[0], 330, -126);
+  const yc = pv[1] + 70; gantry.yc.position.set(q[0], yc, -112);
+  gantry.zc.position.set(q[0], yc + 10, 46);
+  gantry.zcar.position.set(q[0], yc - 14, pv[2] + 28);
+  const armL = Math.max(1, yc - 34 - pv[1]); gantry.arm.scale.y = armL; gantry.arm.position.set(q[0], pv[1] + armL / 2, pv[2] + 28);
+  gantry.yaw.position.set(pv[0], pv[1], pv[2] + 22);
+  gantry.headG.position.set(pv[0], pv[1], pv[2]);
+  gantry.headG.rotation.set(0, 0, 0); gantry.headG.rotateZ(q[3] * Math.PI / 180); gantry.headG.rotateX(-q[4] * Math.PI / 180);
+  gantry.headG.position.x += sim.flex[0] * 40; gantry.headG.position.z += sim.flex[2] * 40; // vibration shown ×40
+  if (sim.traj !== lastTraj) {
+    lastTraj = sim.traj;
+    if (sim.traj && sim.traj.pts) { const P = sim.traj.pts, st = Math.max(1, Math.floor(P.length / 300)), arr = []; for (let i = 0; i < P.length; i += st) arr.push(...OE.tipOf(P[i])); arr.push(...OE.tipOf(P[P.length - 1])); pathLine.geometry.dispose(); pathLine.geometry = new THREE.BufferGeometry(); pathLine.geometry.setAttribute('position', new THREE.Float32BufferAttribute(arr, 3)); pathLine.visible = true; }
+    else if (!sim.traj) pathLine.visible = sim.state === 'FINE_ALIGN' || sim.state === 'IMAGING' ? pathLine.visible : false;
+  }
+  const t = sim.tipTrue; if (sim.tick % 3 === 0) { if (trailN < 600) trailN++; else trailPos.copyWithin(0, 3); trailPos.set(t, (trailN - 1) * 3); trailLine.geometry.attributes.position.needsUpdate = true; trailLine.geometry.setDrawRange(0, trailN); }
+  if (sim.goal === 'R' || sim.goal === 'L') { const e = OE.eyePos(sim.goal, sim.fTrue); targetM.position.set(e[0], e[1] + OE.G.WD, e[2]); targetM.visible = true; } else targetM.visible = false;
+  if (controls) controls.update();
+  renderer.render(scene, camera);
+}
+
+/* ---------- telemetry ---------- */
+const axTab = $('#axTab');
+axTab.innerHTML = N.map((n, i) => `<tr><td>${n}</td><td class="num mono" id="ac${i}"></td><td class="num mono" id="al${i}"></td><td class="num mono" id="am${i}"></td><td><div class="resbar"><i id="ar${i}"></i><b></b></div></td></tr>`).join('');
+const chipDefs = [['plan', 'Last plan'], ['slip', 'Fault detected after'], ['stop', 'Stop time'], ['min', 'Min clearance'], ['vib', 'Head vibration'], ['mode', 'Fine-align sensor']];
+$('#chips').innerHTML = chipDefs.map(([k, l]) => `<div class="chip"><div class="lbl">${l}</div><div class="v" id="ch-${k}">—</div></div>`).join('');
+const stCls = s => ({ IMAGING: 'ok', READY: 'ok', FAULT_SLIP: 'crit', FAULT_NOGO: 'crit', ESTOP: 'crit', RETRACT: 'warn', RECOVER: 'warn', HOLD: 'warn', MANUAL_JOG: 'warn' }[s] || '');
+function fmt(v, i) { return i < 3 ? v.toFixed(3) + ' mm' : v.toFixed(4) + '°'; }
+let logSig = '';
+function updateUI() {
+  const st = $('#state'); st.textContent = sim.state.replace('_', ' '); st.className = 'state ' + stCls(sim.state);
+  $('#msg').textContent = sim.msg; $('#clock').textContent = 't = ' + sim.t.toFixed(3) + ' s';
+  const c = sim.clrTrue; $('#clrBig').textContent = c.toFixed(1) + ' mm';
+  const bar = $('#clrBar'); bar.style.width = Math.max(0, Math.min(100, c / 80 * 100)) + '%'; bar.style.background = `var(${c < 10 ? '--crit' : c < 25 ? '--warn' : '--ok'})`;
+  if ((sim.state === 'FINE_ALIGN' || sim.state === 'IMAGING') && sim.alignErr != null) { $('#alignBig').textContent = (sim.alignErr * 1000).toFixed(0) + ' µm'; $('#alignSub').textContent = sim.pe ? 'pupil camera locked (100 Hz)' : 'depth camera only — closing in'; }
+  else { $('#alignBig').textContent = '—'; $('#alignSub').textContent = 'pupil camera idle'; }
+  for (let i = 0; i < 5; i++) {
+    $('#ac' + i).textContent = fmt(sim.qc[i], i); $('#al' + i).textContent = fmt(sim.lMeas[i], i); $('#am' + i).textContent = fmt(sim.mMeas[i], i);
+    const r = Math.min(1.375, Math.abs(sim.resid[i]) / sim.ax[i].slipThr); const el = $('#ar' + i); el.style.width = (r / 1.375 * 100) + '%'; el.style.background = `var(${r > 1 ? '--crit' : r > 0.6 ? '--warn' : '--accent'})`;
+  }
+  const m = sim.m;
+  $('#ch-plan').textContent = m.lastPlanMs != null ? `${m.lastPlanMs.toFixed(1)} ms ${m.lastPlanMethod}` : '—';
+  $('#ch-slip').textContent = m.slipLatencyMs != null ? m.slipLatencyMs.toFixed(1) + ' ms' : '—';
+  $('#ch-stop').textContent = m.stopTimeMs != null ? m.stopTimeMs.toFixed(0) + ' ms' : '—';
+  $('#ch-min').textContent = m.minClr < 1e8 ? m.minClr.toFixed(1) + ' mm' : '—';
+  $('#ch-vib').textContent = (Math.hypot(...sim.flex) * 1000).toFixed(1) + ' µm';
+  $('#ch-mode').textContent = sim.pe ? 'pupil cam' : (sim.state === 'FINE_ALIGN' || sim.state === 'IMAGING') ? 'depth cam' : 'idle';
+  const sig = sim.events.length + ':' + (sim.events.length ? sim.events[sim.events.length - 1].t : 0);
+  if (sig !== logSig) { logSig = sig; $('#log').innerHTML = sim.events.slice(-60).reverse().map(e => `<div><span>${e.t.toFixed(3)}</span><span class="ty ${e.type}">${e.type}</span><span>${e.text.replace(/</g, '&lt;')}</span></div>`).join(''); }
+  drawCharts();
+}
+function chart(cv, series, yMax, lines, yLabel) {
+  const dpr = Math.min(2, devicePixelRatio || 1), w = cv.clientWidth, hh = cv.clientHeight; if (!w) return;
+  if (cv.width !== Math.round(w * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(hh * dpr); }
+  const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, hh);
+  const L = sim.lg, LOGN = sim.LOGN, n = L.n, pl = 30, pb = 4, pt = 4, W = w - pl - 4, H = hh - pt - pb;
+  g.font = '10px ' + css('--f-mono'); g.fillStyle = css('--mute'); g.strokeStyle = css('--line'); g.lineWidth = 1;
+  for (const y of [0, yMax / 2, yMax]) { const yy = pt + H - y / yMax * H; g.beginPath(); g.moveTo(pl, yy); g.lineTo(pl + W, yy); g.stroke(); g.fillText(String(+y.toFixed(2)), 2, yy + 3); }
+  for (const [y, c] of lines) { const yy = pt + H - y / yMax * H; g.strokeStyle = css(c); g.setLineDash([4, 3]); g.beginPath(); g.moveTo(pl, yy); g.lineTo(pl + W, yy); g.stroke(); g.setLineDash([]); }
+  if (n < 2) return;
+  for (const [arr, c] of series) {
+    g.strokeStyle = css(c); g.lineWidth = 1.5; g.beginPath();
+    for (let k = 0; k < n; k++) { const idx = (L.i - n + k + LOGN * 2) % LOGN; const x = pl + k / (LOGN - 1) * W, v = Math.max(0, Math.min(yMax, arr[idx])); const y = pt + H - v / yMax * H; k ? g.lineTo(x, y) : g.moveTo(x, y); }
+    g.stroke();
+  }
+}
+const absB = [0, 1, 2, 3, 4].map(() => new Float64Array(1200));
+function drawCharts() {
+  const L = sim.lg;
+  chart($('#cClr'), [[L.clr, '--accent']], 80, [[10, '--crit'], [40, '--warn']]);
+  chart($('#cErr'), [[L.err, '--accent']], 100, [[50, '--warn']]);
+  const pal = ['--accent', '--ok', '--warn', '--mute', '--ink'];
+  chart($('#cRes'), L.res.map((a, i) => { const b = absB[i]; for (let k = 0; k < a.length; k++) b[k] = Math.abs(a[k]); return [b, pal[i]]; }), 1.4, [[1, '--crit']]);
+}
+
+/* ---------- main loop ---------- */
+let lastT = performance.now(), uiAcc = 0;
+function frame(now) {
+  const dt = Math.min(0.05, (now - lastT) / 1000); lastT = now;
+  const steps = Math.max(1, Math.round(dt * 1000 * +$('#hSpd').value));
+  for (let k = 0; k < steps; k++) {
+    sim.stepMs();
+    for (let j = waiters.length - 1; j >= 0; j--) if (waiters[j].pred()) { const w = waiters.splice(j, 1)[0]; w.res(); }
+  }
+  update3d();
+  uiAcc += dt; if (uiAcc > 0.05) { uiAcc = 0; updateUI(); }
+  requestAnimationFrame(frame);
+}
+init3d();
+requestAnimationFrame(frame);
+updateUI();
+
+/* ---------- validation tab ---------- */
+const R = RESULTS, f1 = x => (+x).toFixed(1), f2 = x => (+x).toFixed(2), f0 = x => Math.round(x);
+const V = { pass: '<span class="verdict v-pass">Pass</span>', warn: '<span class="verdict v-warn">Marginal</span>', fix: '<span class="verdict v-warn">Pass after fix</span>', fail: '<span class="verdict v-fail">Fails as specified</span>', re: '<span class="verdict v-warn">Spec restated</span>' };
+const rr = R.repeat.recommended, ra = R.repeat.asSpecifiedRotaryEncoder, rd = R.random, sl = R.slip, fz = R.freeze, es = R.estop, ho = R.handover, ps = R.patientShift, tr = R.tracking, se = R.settle;
+const rows = [
+  ['Linear repeatability, 20 bidirectional cycles', '±25 µm', `±${f1(Math.max(rr.tip_x_um, rr.tip_y_um, rr.tip_z_um))} µm at the lens tip (X ${f1(rr.tip_x_um)}, Y ${f1(rr.tip_y_um)}, Z ${f1(rr.tip_z_um)})`, V.pass],
+  ['Rotary repeatability', '±0.01°', `±${rr.yaw_deg.toFixed(4)}° with MT6835. With the specified AMT223: ±${ra.yaw_deg.toFixed(4)}°, but one count is 0.022°, so the test cannot resolve the target`, V.fix],
+  ['Settle after free-space move', '< 300 ms to ±50 µm', `0 ms: tip never leaves ±50 µm (residual ${f1(se.zvd_on.peak_after_end_um)} µm with ZVD, ${f1(se.zvd_off.peak_after_end_um)} µm without). A trapezoid profile needs ${f0(se.zvd_off_trapezoid_like.settle_ms_to_50um)} ms (${f0(se.zvd_off_trapezoid_like.peak_after_end_um)} µm peak)`, V.pass],
+  ['Lock on the eye after the arc (breathing patient)', '< 300 ms to ±50 µm', `mean ${f0(se.eyeLock_ms_after_arc_with_breathing.mean)} ms, p95 ${f0(se.eyeLock_ms_after_arc_with_breathing.p95)} ms, worst ${f0(se.eyeLock_ms_after_arc_with_breathing.max)} ms over 20 arrivals`, V.warn],
+  ['Path accuracy on the arc', '< 100 µm RMS', `${f1(rd.pathRMS_um.mean)} µm RMS mean, ${f1(rd.pathRMS_um.max)} µm worst move; peak ${f1(rd.pathMax_um.max)} µm (1000 moves)`, V.pass],
+  ['Keep-out violations, randomised moves', '0 in 1000', `${rd.contact} contacts, ${rd.below_margin_minus_0p5} below 9.5 mm; closest approach ${f2(rd.minClearance.min)} mm (breathing moves the face 0.3 mm into the margin). ${rd.planFailures} planner failures`, V.pass],
+  ['Re-plan time', '< 50 ms', `mean ${f1(rd.planMs.mean)} ms, p95 ${f1(rd.planMs.p95)} ms, worst ${f1(rd.planMs.max)} ms (RRT* + shortcut + spline)`, V.pass],
+  ['Nuisance slip trips', 'none', `${rd.falseSlipTrips} in 1000 moves; peak healthy residual 44% of threshold`, V.pass],
+  ['Slip detection', '< 2 ms', `decision 0.4 ms after lost motion crosses the threshold. Measured from slip onset: mean ${f1(sl.latency_ms.mean)} ms, worst ${f0(sl.latency_ms.max)} ms, because the carriage coasts on its own inertia at first. Frozen encoder: mean ${f2(fz.latency_ms.mean)} ms`, V.re],
+  ['Fault to standstill', '< 50 ms', `slip: mean ${f0(sl.stop_ms.mean)} ms, worst ${f0(sl.stop_ms.max)} ms; frozen encoder: worst ${f0(fz.stop_ms.max)} ms. Auto-recovery ${sl.autoRecovered}/${sl.detected} and ${fz.autoRecovered}/${fz.detected}`, V.pass],
+  ['E-stop at 150 mm/s, Category 1', '< 50 ms', `${f1(es.cat1_recommended.stop_ms.mean)} ms, ${f1(es.cat1_recommended.coast_mm.mean)} mm travel, then STO + Z brake`, V.pass],
+  ['E-stop as specified (cut motor power)', '< 50 ms', `${f0(es.cat0_as_specified.stop_ms.mean)} ms and ${f1(es.cat0_as_specified.coast_mm.mean)} mm of coasting toward wherever the head was heading`, V.fail],
+  ['Hand-over force', '< 5 N to move', `starts moving at ${ho.rows.find(r => r.speed_mm_s > 0).force_N} N; 5 N gives ${f0(ho.rows[4].speed_mm_s)} mm/s. An 8 N push at the face stops at ${f1(ho.pushFace.minClearance_mm)} mm clearance`, V.fix],
+  ['Patient moves 20 mm', 'platform compensates', ps.map(p => `(${p.shift}) mm: re-locked in ${f1(p.reacquire_s)} s, ${f0(p.finalErr_um)} µm`).join('; ') + '. No faults', V.pass],
+  ['Imaging stability with breathing', '—', `tip-to-eye error ${f0(tr.camNoise_0p3mm.mean)} µm mean, ${f0(tr.camNoise_0p3mm.max)} µm worst over 8 s`, V.pass]
+];
+$('#valTab tbody').innerHTML = rows.map(r => `<tr><td>${r[0]}</td><td class="mono">${r[1]}</td><td>${r[2]}</td><td>${r[3]}</td></tr>`).join('');
+
+// ZVD sweep chart (SVG, log y)
+(function () {
+  const d = R.zvdSweep, Wd = 640, Hd = 250, pl = 48, pr = 120, pt = 14, pb = 34;
+  const xs = d.map(r => r.fHead), x = f => pl + (Math.log(f) - Math.log(25)) / (Math.log(130) - Math.log(25)) * (Wd - pl - pr);
+  const y = v => pt + (1 - (Math.log10(Math.max(3, v)) - Math.log10(3)) / (Math.log10(300) - Math.log10(3))) * (Hd - pt - pb);
+  const ser = [['trapezoid_peak_um', '--crit', 'Trapezoid'], ['none_peak_um', '--warn', 'S-curve only'], ['zvd_peak_um', '--accent', 'S-curve + ZVD']];
+  let s = `<svg viewBox="0 0 ${Wd} ${Hd}" width="100%" style="min-width:480px;max-width:760px" role="img" aria-label="Residual vibration versus head resonance">`;
+  for (const v of [3, 10, 30, 100, 300]) s += `<line x1="${pl}" x2="${Wd - pr}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)"/><text x="${pl - 6}" y="${y(v) + 4}" text-anchor="end">${v}</text>`;
+  s += `<line x1="${pl}" x2="${Wd - pr}" y1="${y(50)}" y2="${y(50)}" stroke="var(--crit)" stroke-dasharray="4 3"/><text x="${Wd - pr + 6}" y="${y(50) + 4}">±50 µm spec</text>`;
+  for (const f of xs) s += `<text x="${x(f)}" y="${Hd - pb + 16}" text-anchor="middle">${f}</text>`;
+  s += `<text x="${(pl + Wd - pr) / 2}" y="${Hd - 4}" text-anchor="middle">head resonance (Hz)</text><text x="12" y="${pt + 4}">µm</text>`;
+  s += `<line x1="${x(45)}" x2="${x(45)}" y1="${pt}" y2="${Hd - pb}" stroke="var(--mute)" stroke-dasharray="2 3"/>`;
+  ser.forEach(([k, c, lab], j) => { s += `<polyline fill="none" stroke="var(${c})" stroke-width="2" points="${d.map(r => x(r.fHead) + ',' + y(r[k])).join(' ')}"/>`; d.forEach(r => s += `<circle cx="${x(r.fHead)}" cy="${y(r[k])}" r="3" fill="var(${c})"/>`); });
+  const lastR = d[d.length - 1]; let prevY = -1e9; ser.map(([k, c, lab]) => [y(lastR[k]) + 4, c, lab]).sort((a, b) => a[0] - b[0]).forEach(([yy, c, lab]) => { yy = Math.max(yy, prevY + 14); prevY = yy; s += `<text x="${Wd - pr + 6}" y="${yy}" style="fill:var(${c})">${lab}</text>`; });
+  s += '</svg>'; $('#zvdSvg').innerHTML = s;
+})();
+
+/* ---------- design review ---------- */
+const FIND = [
+  ['crit', 'E-stop that cuts motor power lets the head coast', `With power removed at 150 mm/s the reflected motor inertia (≈107 kg through a 5 mm lead) coasts ${f1(es.cat0_as_specified.coast_mm.mean)} mm over ${f0(es.cat0_as_specified.stop_ms.mean)} ms.`, `Category 1 stop: drives decelerate at 5 m/s² (${f1(es.cat1_recommended.stop_ms.mean)} ms, ${f1(es.cat1_recommended.coast_mm.mean)} mm), then a safety relay removes power through STO. Fit a spring-applied brake on Z and keep dynamic braking as a backup.`],
+  ['crit', 'A 14-bit rotary encoder cannot prove ±0.01°', 'AMT223 resolves 0.022° per count, more than twice the tolerance it is meant to verify.', 'MT6835 21-bit magnetic sensor on each output (≈0.0002° resolution, ±0.0007° simulated repeatability). Calibrate it once against the 2 m laser-wall test.'],
+  ['crit', 'A screw-end encoder cannot see what happens at the nut', 'An absolute encoder on the screw measures the screw, so nut backlash and carriage slip stay invisible.', 'Magnetic linear scale on each carriage (AS5311 + multipole strip, 0.5 µm). The position loop closes on it; the motor encoder runs the velocity loop.'],
+  ['warn', 'Unpreloaded SFU1605 nut eats the slip-detection budget', 'About 20 µm of backlash forces the slip threshold from ≈10 µm up to ≈19 µm.', 'DFU1605 double-nut preloaded screws. The simulator lets you switch back to compare.'],
+  ['warn', '1 kHz current loop is too slow', 'A 1 kHz current loop cannot support a 100 Hz velocity loop on a 214 Hz drivetrain mode.', 'FOC drives run current at ≥16 kHz and velocity at 10 kHz; the Teensy runs the 1 kHz position loop and the 10 kHz encoder cross-check.'],
+  ['warn', 'Lowering the current limit does not make the head yield', 'Reflected inertia near 100 kg plus friction means a 5 N push barely moves a 5 mm-lead screw axis.', `Admittance control from a load-cell handle (3 × strain gauges + HX711) with an enabling switch. Simulated: moves at ${ho.rows.find(r => r.speed_mm_s > 0).force_N} N, ${f0(ho.rows[4].speed_mm_s)} mm/s at 5 N, and a virtual wall stops a push at ${f1(ho.pushFace.minClearance_mm)} mm from the face.`],
+  ['warn', 'The ball screw is too stiff to act as a force sensor', 'At 15 N/µm, a 5 N load deflects the screw 0.3 µm, below one encoder count.', 'Present the dual-encoder trick as slip, jam and lost-motion detection. Torque estimation does work on the harmonic-drive axes.'],
+  ['warn', '"Detect slip in under 2 ms" needs restating', `A slipping carriage keeps coasting on its own inertia, so lost motion takes ${f0(sl.latency_ms.min)}–${f0(sl.latency_ms.max)} ms to reach 10 µm.`, 'Spec: "fault declared within 0.5 ms of 10 µm lost motion". The cross-check runs at 10 kHz with a 4-sample confirm and a model of the expected elastic deflection, giving 0 nuisance trips in 1000 moves.'],
+  ['warn', 'The depth camera cannot align to ±50 µm', 'D405 depth noise is a few tenths of a millimetre, several times the alignment tolerance.', `Use the D405 for face registration and the keep-out only. For the last 4 mm, a pupil camera on the head (lateral) and corneal-reflex focus (axial) at 100 Hz take over: ${f0(tr.camNoise_0p3mm.mean)} µm mean error with a breathing patient.`],
+  ['warn', 'Path accuracy cannot be verified with a RealSense', 'Measuring 100 µm RMS needs an instrument several times better than that.', 'Log path error from the load encoders through forward kinematics; spot-check with a dial indicator and a close-range ChArUco board.'],
+  ['ok', 'Plan paths for speed, not only for clearance', 'Shortest paths hug the face, where speed-and-separation monitoring throttles the head to 30 mm/s.', 'The RRT* edge cost now penalises time spent inside the 40 mm band, so arcs swing wide and finish in about 2 s.'],
+  ['ok', 'A >100 Hz head mode is optimistic for a cantilevered camera', 'A pan-tilt head on a Z column realistically sits between 30 and 60 Hz.', 'S-curve (25 ms jerk filter) plus ZVD keeps residual vibration under 18 µm from 30 to 120 Hz; a trapezoid profile reaches 177 µm.'],
+  ['ok', 'The patient moving needs a defined response', 'Tracking a fast lean head-on drives the nose into the head.', 'If the face moves faster than 8 mm/s the head retreats 20 mm and holds until the patient is still, then replans. Re-lock after a 20 mm lean takes 2.1–2.3 s with no faults.'],
+  ['ok', 'Pan-tilt motor sizing', 'The D6374 is a 3 kW motor weighing nearly 1 kg, which loads the Z axis and the head mode.', 'Gimbal BLDC (GM4108 class) with a 30:1 harmonic drive.']
+];
+$('#findings').innerHTML = FIND.map(([sev, t, why, fix]) => `<article class="find" style="--sev: var(--${sev === 'crit' ? 'crit' : sev === 'warn' ? 'warn' : 'ok'})"><h4>${t}</h4><p class="why">${why}</p><p class="fix">${fix}</p></article>`).join('');
+const BOM = [
+  ['5 × AMT223 load encoders', '3 × AS5311 + magnetic strip, 2 × MT6835 boards', '+3,000', 'Load-side sensing that sees the carriage and resolves 0.01°'],
+  ['3 × SFU1605 screws', '3 × DFU1605 preloaded', '+4,500', 'Backlash ≈ 3 µm'],
+  ['Closed-loop steppers on X/Y/Z', 'FOC servo drives with step-free position input (ODrive S1 class)', '+12,000', 'Fast current/velocity loops, controlled stop'],
+  ['D6374 on pan-tilt', '2 × GM4108 gimbal BLDC', '−6,000', 'Lighter head, higher head resonance'],
+  ['Z motor', 'Z motor with spring-applied brake', '+5,000', 'No drop when power is removed'],
+  ['Mushroom e-stop wired in series', 'Safety relay with delayed contacts (Cat 1) + STO wiring', '+9,000', 'Controlled stop before power removal'],
+  ['—', 'Load-cell handle (3 × TAL220 + HX711) + 3-position enabling switch', '+3,500', 'Admittance hand-over'],
+  ['—', 'Pupil camera module (global shutter, 100 fps) + IR LED ring', '+4,000', 'Fine alignment to ±50 µm'],
+];
+$('#bomTab tbody').innerHTML = BOM.map(r => `<tr><td>${r[0]}</td><td>${r[1]}</td><td class="num mono">${r[2]}</td><td>${r[3]}</td></tr>`).join('') + `<tr><td colspan="2"><b>Net change</b></td><td class="num mono"><b>≈ +35,000</b></td><td>≈ ₹2.15 lakh total</td></tr>`;
+})();
+</script>

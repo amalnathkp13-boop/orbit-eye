@@ -1,0 +1,11 @@
+{
+  "name": "orbit-eye",
+  "version": "1.0.0",
+  "description": "ORBIT-EYE: 5-axis ophthalmic positioning gantry — physics simulator, planner, dual-encoder safety chain and validation suite",
+  "private": true,
+  "scripts": {
+    "validate": "node sim/validate.js",
+    "build": "node build.js"
+  },
+  "license": "MIT"
+}
